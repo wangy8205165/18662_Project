@@ -13,7 +13,7 @@ class MultiAgentResourceEnv(gym.Env):
             super(MultiAgentResourceEnv, self).__init__()
 
             # 地图大小
-            self.grid_size = 10
+            self.grid_size = 20
             
             # 状态空间 (agent位置)
             self.observation_space = spaces.Dict({
@@ -23,13 +23,14 @@ class MultiAgentResourceEnv(gym.Env):
             # 动作空间 (上下左右)
             self.action_space = spaces.Discrete(4)
 
+            png_size = 30
             self.assets = {
-                "agent_1": pygame.transform.scale(pygame.image.load("assets/player.png"), (50, 50)),
-                "agent_2": pygame.transform.scale(pygame.image.load("assets/zombie.png"), (50, 50)),
-                "wood": pygame.transform.scale(pygame.image.load("assets/wood.png"), (50, 50)),
-                "stone": pygame.transform.scale(pygame.image.load("assets/stone.png"), (50, 50)),
-                "iron": pygame.transform.scale(pygame.image.load("assets/iron.png"), (50, 50)),
-                "diamond": pygame.transform.scale(pygame.image.load("assets/diamond.png"), (50, 50)),
+                "agent_1": pygame.transform.scale(pygame.image.load("assets/player.png"), (png_size, png_size)),
+                "agent_2": pygame.transform.scale(pygame.image.load("assets/zombie.png"), (png_size, png_size)),
+                "wood": pygame.transform.scale(pygame.image.load("assets/wood.png"), (png_size, png_size)),
+                "stone": pygame.transform.scale(pygame.image.load("assets/stone.png"), (png_size, png_size)),
+                "iron": pygame.transform.scale(pygame.image.load("assets/iron.png"), (png_size, png_size)),
+                "diamond": pygame.transform.scale(pygame.image.load("assets/diamond.png"), (png_size, png_size)),
             }
 
             # Resources location
@@ -110,10 +111,13 @@ class MultiAgentResourceEnv(gym.Env):
 
     def render(self, screen):
         # 清屏
-        screen.fill((0, 0, 0))  # 黑色背景
+        cell_size = 30
+        window_size = self.grid_size * cell_size
+        screen = pygame.display.set_mode((window_size, window_size))
+        screen.fill((255, 255, 255))  # 黑色背景
 
         # 绘制网格
-        cell_size = 50
+        
         for x in range(self.grid_size):
             for y in range(self.grid_size):
                 pygame.draw.rect(screen, (200, 200, 200), 
@@ -142,20 +146,21 @@ class MultiAgentResourceEnv(gym.Env):
 # ======================= 主程序 =======================
 def main():
     pygame.init()
-
-    screen = pygame.display.set_mode((500, 500))
+    env = MultiAgentResourceEnv()
+    screen = pygame.display.set_mode((env.grid_size * 30, env.grid_size * 30))
     pygame.display.set_caption("🌳 资源收集游戏")
 
-    env = MultiAgentResourceEnv()
+    
     state = env.reset()
     done = False
 
     move_flag = False  # 防止连续触发
 
     clock = pygame.time.Clock()
+    env.render(screen)
 
     while not done:
-        env.render(screen)
+        # env.render(screen)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -204,6 +209,7 @@ def main():
                     state, reward, done, message = env.step(agent, action)
                     move_flag = False
                     print(message)
+                    env.render(screen)
 
                     print(f"Agent 1 is now at {env.agent_positions["agent_1"]}")
                     print(f"Agent 2 is now at {env.agent_positions["agent_2"]}")
