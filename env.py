@@ -2,134 +2,215 @@ import gym
 from gym import spaces
 import numpy as np
 import curses  # 用于实现键盘控制
+import pygame
+import sys
+import time
 
-
-class DiamondCollectorEnv(gym.Env):
+class MultiAgentResourceEnv(gym.Env):
     metadata = {"render.modes": ["human"]}
 
     def __init__(self):
-            super(DiamondCollectorEnv, self).__init__()
+            super(MultiAgentResourceEnv, self).__init__()
 
             # 地图大小
             self.grid_size = 10
             
             # 状态空间 (agent位置)
-            self.observation_space = spaces.Box(low=0, high=self.grid_size - 1, shape=(2,), dtype=np.int32)
-
+            self.observation_space = spaces.Dict({
+                "agent_1": spaces.Box(low=0, high=self.grid_size - 1, shape=(2,), dtype=np.int32),
+                "agent_2": spaces.Box(low=0, high=self.grid_size - 1, shape=(2,), dtype=np.int32)
+            })
             # 动作空间 (上下左右)
             self.action_space = spaces.Discrete(4)
 
-            # 钻石位置
-            self.diamond_pos = None
+            self.assets = {
+                "agent_1": pygame.transform.scale(pygame.image.load("assets/player.png"), (50, 50)),
+                "agent_2": pygame.transform.scale(pygame.image.load("assets/zombie.png"), (50, 50)),
+                "wood": pygame.transform.scale(pygame.image.load("assets/wood.png"), (50, 50)),
+                "stone": pygame.transform.scale(pygame.image.load("assets/stone.png"), (50, 50)),
+                "iron": pygame.transform.scale(pygame.image.load("assets/iron.png"), (50, 50)),
+                "diamond": pygame.transform.scale(pygame.image.load("assets/diamond.png"), (50, 50)),
+            }
+
+            # Resources location
+            self.resources = {
+            "wood": np.random.randint(0, self.grid_size, size=(2,)),
+            "stone": np.random.randint(0, self.grid_size, size=(2,)),
+            "iron": np.random.randint(0, self.grid_size, size=(2,)),
+            "diamond": np.random.randint(0, self.grid_size, size=(2,))
+            }
+
+            self.collected_resources = {"agent_1": set(), "agent_2": set()}
 
             # 初始化环境
             self.reset()
     
     def reset(self):
         # 重置智能体到左上角
-        self.agent_pos = np.array([0, 0])
-
-        # 随机生成一个钻石位置
-        self.diamond_pos = np.random.randint(0, self.grid_size, size=(2,))
+        self.agent_positions = {
+            "agent_1": np.array([0, 0]),
+            "agent_2": np.array([self.grid_size - 1, self.grid_size - 1])
+        }
         
-        # 确保钻石不会和智能体初始位置重合
-        while np.array_equal(self.diamond_pos, self.agent_pos):
-            self.diamond_pos = np.random.randint(0, self.grid_size, size=(2,))
+        for resource in self.resources:
+            while True:
+                position = np.random.randint(0, self.grid_size, size=(2,))
+                if not any(np.array_equal(position, pos) for pos in self.agent_positions.values()):
+                    self.resources[resource] = position
+                    break
 
-        return self.agent_pos
+        self.collected_resources = {"agent_1": set(), "agent_2": set()}
+
+        return self.agent_positions
     
-    def step(self, action):
-        # 定义移动规则
+    def step(self, agent, action):
         movement = {
-            0: np.array([0, 1]),   # 向右
-            1: np.array([0, -1]),  # 向左
-            2: np.array([1, 0]),   # 向下
-            3: np.array([-1, 0])   # 向上
+            0: np.array([0, 1]),
+            1: np.array([0, -1]),
+            2: np.array([1, 0]),
+            3: np.array([-1, 0])
         }
 
-        # 更新智能体的位置
-        self.agent_pos += movement[action]
+        self.agent_positions[agent] += movement[action]
+        self.agent_positions[agent] = np.clip(self.agent_positions[agent], 0, self.grid_size - 1)
 
-        # 边界处理
-        self.agent_pos = np.clip(self.agent_pos, 0, self.grid_size - 1)
+        reward = 0
+        done = False
+        message = ""
 
-        # 检查是否收集到钻石
-        done = np.array_equal(self.agent_pos, self.diamond_pos)
+        for resource, position in self.resources.items():
+            if np.array_equal(self.agent_positions[agent], position):
+                if self._can_collect(agent, resource):
+                    self.collected_resources[agent].add(resource)
+                    reward = 10
+                    message = f"{agent} 成功收集了 {resource}!"
+                else:
+                    message = f"⚠️ {agent} 未满足收集 {resource} 的条件!"
 
-        # 奖励机制
-        reward = 10 if done else -0.1  # 鼓励尽快找到钻石，避免无效移动
+        # 检查是否完成全部资源收集
+        all_resources = {"wood", "stone", "iron", "diamond"}
+        if all_resources.issubset(self.collected_resources[agent]):
+            done = True
+            message = f"🎯 {agent} 收集了所有资源，游戏胜利！"
 
-        return self.agent_pos, reward, done, {}
+        return self.agent_positions, reward, done, message
 
-    def render(self, stdscr=None):
-        grid = np.full((self.grid_size, self.grid_size), '⬜️')
 
-        # 标记智能体的位置
-        grid[tuple(self.agent_pos)] = '🟦'
+    def _can_collect(self, agent, resource):
+        """资源依赖规则"""
+        required_resources = {
+            "wood": set(),
+            "stone": {"wood"},
+            "iron": {"wood", "stone"},
+            "diamond": {"wood", "stone", "iron"}
+        }
 
-        # 标记钻石的位置
-        if not np.array_equal(self.agent_pos, self.diamond_pos):
-            grid[tuple(self.diamond_pos)] = '💎'
+        return required_resources[resource].issubset(self.collected_resources[agent])
 
-        # 打印地图
-        if stdscr:
-            stdscr.clear()
-            for row in grid:
-                stdscr.addstr(' '.join(row) + '\n')
-            stdscr.refresh()
-        else:
-            for row in grid:
-                print(' '.join(row))
-            print('\n' + '-' * 30 + '\n')
+
+    def render(self, screen):
+        # 清屏
+        screen.fill((0, 0, 0))  # 黑色背景
+
+        # 绘制网格
+        cell_size = 50
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                pygame.draw.rect(screen, (200, 200, 200), 
+                                 (y * cell_size, x * cell_size, cell_size, cell_size), 1)
+
+
+            # 绘制资源
+        for resource, pos in self.resources.items():
+            screen.blit(self.assets[resource], (pos[1] * cell_size, pos[0] * cell_size))
+
+        # 绘制智能体
+        screen.blit(self.assets["agent_1"], 
+                    (self.agent_positions["agent_1"][1] * cell_size, 
+                    self.agent_positions["agent_1"][0] * cell_size))
+
+        screen.blit(self.assets["agent_2"], 
+                    (self.agent_positions["agent_2"][1] * cell_size, 
+                    self.agent_positions["agent_2"][0] * cell_size))
+
+        # 刷新画面
+        pygame.display.flip()
 
     def close(self):
-        pass
+        pygame.quit()
 
-def main(stdscr):
-    env = DiamondCollectorEnv()
+# ======================= 主程序 =======================
+def main():
+    pygame.init()
 
-    # 初始化环境
+    screen = pygame.display.set_mode((500, 500))
+    pygame.display.set_caption("🌳 资源收集游戏")
+
+    env = MultiAgentResourceEnv()
     state = env.reset()
     done = False
 
-    stdscr.clear()
-    stdscr.addstr("使用键盘控制:\n")
-    stdscr.addstr(" ↑ : 上移\n ↓ : 下移\n ← : 左移\n → : 右移\n Q : 退出\n")
+    move_flag = False  # 防止连续触发
 
-    # 游戏循环
-    print("Game starts!")
+    clock = pygame.time.Clock()
+
     while not done:
-        env.render(stdscr)
+        env.render(screen)
 
-        # 等待用户输入
-        key = stdscr.getch()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-        # 将键盘按键映射为环境动作
-        if key == curses.KEY_UP:
-            action = 3  # 上
-        elif key == curses.KEY_DOWN:
-            action = 2  # 下
-        elif key == curses.KEY_LEFT:
-            action = 1  # 左
-        elif key == curses.KEY_RIGHT:
-            action = 0  # 右
-        elif key == ord('q') or key == ord('Q'):
-            break
-        else:
-            continue  # 无效按键，跳过
+            if event.type == pygame.KEYDOWN:
+                print("keyboard pressed down!")
+                move_flag = True
 
-        # 执行动作
-        state, reward, done, _ = env.step(action)
+            if event.type == pygame.KEYUP and move_flag:
+                print("ok, let's move!")
+                agent = "agent_1"  # 默认操作 agent_1
+                action = None
+                print(f"current pressed key is {event.key}")
+                print(type(event.key))
+                # 控制 agent_1
+                if event.key == pygame.K_w:
+                    action = 3  # 上
+                elif event.key == pygame.K_s:
+                    action = 2  # 下
+                elif event.key == pygame.K_a:
+                    action = 1  # 左
+                elif event.key == pygame.K_d:
+                    action = 0  # 右
 
-        # 显示奖励信息
-        stdscr.addstr(f"奖励: {reward}\n")
+                # 控制 agent_2
+                elif event.key == pygame.K_UP:
+                    agent = "agent_2"
+                    action = 3
+                elif event.key == pygame.K_DOWN:
+                    agent = "agent_2"
+                    action = 2
+                elif event.key == pygame.K_LEFT:
+                    agent = "agent_2"
+                    action = 1
+                elif event.key == pygame.K_RIGHT:
+                    agent = "agent_2"
+                    action = 0
+                else:
+                    print("Nothing to move!")
+                    action = None
 
-    stdscr.addstr("🎯 恭喜！成功收集到钻石！\n")
-    stdscr.addstr("按 Q 键退出...\n")
-    while True:
-        if stdscr.getch() in [ord('q'), ord('Q')]:
-            break
+
+                if action is not None:
+                    state, reward, done, message = env.step(agent, action)
+                    move_flag = False
+                    print(message)
+
+                    print(f"Agent 1 is now at {env.agent_positions["agent_1"]}")
+                    print(f"Agent 2 is now at {env.agent_positions["agent_2"]}")
+
+            if event.type == pygame.KEYUP:
+                move_flag = False
+        clock.tick(30)
 
 if __name__ == "__main__":
-    print("let's play the game!")
-    curses.wrapper(main)
+    main()
